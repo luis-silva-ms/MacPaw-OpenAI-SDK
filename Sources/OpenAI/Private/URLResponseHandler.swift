@@ -20,24 +20,43 @@ struct URLResponseHandler {
     }
     
     func interceptAndDecode<ResultType: Codable>(response: URLResponse, urlRequest: URLRequest, responseData data: Data) throws -> ResultType {
-        let interceptedData = intercept(response: response, data: data, request: urlRequest)
-        return try decodeJson(data: interceptedData ?? data)
+        try interceptAndDecode(response: response, urlRequest: urlRequest, error: nil, responseData: data)
     }
     
     func interceptAndDecode<ResultType: Codable>(response: URLResponse?, urlRequest: URLRequest, error: Error?, responseData data: Data?) throws -> ResultType {
         let interceptedData = intercept(response: response, data: data, request: urlRequest)
+        try checkHTTPFailure(response: response, data: data, interceptedData: interceptedData, error: error)
         let unwrappedData = try self.unwrap(error: error, originalData: data, interceptedData: interceptedData)
         return try decodeJson(data: unwrappedData)
     }
     
     func interceptAndDecodeRaw(response: URLResponse, urlRequest: URLRequest, responseData data: Data) throws -> Data {
-        let interceptedData = intercept(response: response, data: data, request: urlRequest)
-        return interceptedData ?? data
+        try interceptAndDecodeRaw(response: response, urlRequest: urlRequest, error: nil, responseData: data)
     }
     
     func interceptAndDecodeRaw(response: URLResponse?, urlRequest: URLRequest, error: Error?, responseData data: Data?) throws -> Data {
         let interceptedData = intercept(response: response, data: data, request: urlRequest)
+        try checkHTTPFailure(response: response, data: data, interceptedData: interceptedData, error: error)
         return try unwrap(error: error, originalData: data, interceptedData: interceptedData)
+    }
+
+    private func checkHTTPFailure(
+        response: URLResponse?,
+        data: Data?,
+        interceptedData: Data?,
+        error: (any Error)?
+    ) throws {
+        if let error, (error as? URLError)?.code == .cancelled || error is CancellationError {
+            throw error
+        }
+        guard let response = response as? HTTPURLResponse, response.statusCode >= 400 else { return }
+        throw HTTPResponseError(
+            response: response,
+            body: data ?? Data(),
+            isBodyTruncated: false,
+            underlyingError: error,
+            decodingBody: interceptedData
+        )
     }
     
     private func decodeJson<ResultType: Codable>(data: Data) throws -> ResultType {
